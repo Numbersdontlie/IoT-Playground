@@ -1,0 +1,62 @@
+services:
+  postgressql:
+    image: postgres:17
+    restart: always
+    container_name: postgresql
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    networks:
+      - IoT_network
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    restart: always
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+    networks:
+      - IoT_network
+    
+  
+  thingsboard-ce:
+    image: thingsboard/tb-node:4.2.1.1
+    container_name: thingsboard
+    restart: always
+    ports:
+      - "8080:80080"  #UI Web
+      - "7070:7070"   #HTTP (optional)
+      - "1884:1883"   #MQTT
+      - "8883:8883"   #MQTT over SSL
+      - "5683-5688:5683-5688/udp" #CoAP
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+    environment:
+      TB_SERVICE_ID: tb-ce-node
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/thingsboard
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      - postgresql
+
+networks:
+  IoT_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: postgres_data
+    driver: local
