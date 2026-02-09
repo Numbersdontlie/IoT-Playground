@@ -1,5 +1,5 @@
 #Variables
-NAME = IoT
+NAME = iot-playground
 COMPOSE = docker-compose.yml
 RED=\033[0;31m
 GREEN=\033[0;32
@@ -7,7 +7,7 @@ RESET=033[0m
 
 #commands
 up:
-	docker compose -p $(NAME) - f docker-compose.yml up --build
+	docker compose -p $(NAME) -f $(COMPOSE) up --build
 	echo "$(GREEN)PostgreSQL Db + pgAdmin + Thingsboard created$(RESET)"
 
 #remove host in HOST_URL, also stop and remove containers

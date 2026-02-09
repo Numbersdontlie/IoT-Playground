@@ -1,6 +1,6 @@
 services:
-  postgressql:
-    image: postgres:17
+  postgresql:
+    image: postgres:16
     restart: always
     container_name: postgresql
     ports:
@@ -30,11 +30,11 @@ services:
     
   
   thingsboard-ce:
-    image: thingsboard/tb-node:4.2.1.1
+    image: "thingsboard/tb-node:4.3.0.1"
     container_name: thingsboard
     restart: always
     ports:
-      - "8080:80080"  #UI Web
+      - "8080:8080"  #UI Web
       - "7070:7070"   #HTTP (optional)
       - "1884:1883"   #MQTT
       - "8883:8883"   #MQTT over SSL
@@ -46,7 +46,7 @@ services:
         max-file: "10"
     environment:
       TB_SERVICE_ID: tb-ce-node
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/thingsboard
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgresql:5432/${POSTGRES_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
     depends_on:
