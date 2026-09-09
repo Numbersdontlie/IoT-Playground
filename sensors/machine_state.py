@@ -181,37 +181,24 @@ class MachineState:
 
     @staticmethod
     def _get_threshold(sensor_name: str) -> float:
-        """Get threshold value from alarm name.
+        """Get threshold value for a sensor.
 
         Args:
-            alarm_name: Alarm identifier.
+            sensor_name: Name of the sensor.
 
         Returns:
-            Threshold value that was exceeded.
+            Threshold value that defines normal operation.
         """
-        if "Critical" in alarm_name:
-            if sensor_name == "Temperature":
-                return 90.0
-            elif sensor_name == "Vibration":
-                return 25.0
-            elif sensor_name == "Pressure":
-                return 1.0
-            elif sensor_name == "RPM":
-                # RPM has both low and high critical thresholds
-                return 500.0
-            elif sensor_name == "Humidity":
-                return 10.0
-        else:  # Warning
-            if sensor_name == "Temperature":
-                return 75.0
-            elif sensor_name == "Vibration":
-                return 15.0
-            elif sensor_name == "Pressure":
-                return 1.5
-            elif sensor_name == "RPM":
-                return 800.0
-            elif sensor_name == "Humidity":
-                return 20.0
+        if sensor_name == "Temperature":
+            return 90.0
+        elif sensor_name == "Vibration":
+            return 25.0
+        elif sensor_name == "Pressure":
+            return 1.0
+        elif sensor_name == "RPM":
+            return 500.0
+        elif sensor_name == "Humidity":
+            return 10.0
         return 0.0
 
     def __repr__(self) -> str:

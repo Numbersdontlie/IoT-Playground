@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import json
+import hashlib
 from typing import List, Optional
 
 from sensors.machine_state import MachineState
@@ -16,7 +17,6 @@ from sensors.kafka_publisher import KafkaPublisher
 
 logger = logging.getLogger(__name__)
 
-# Defaults from SDD
 DEFAULT_MQTT_BROKER = "localhost"
 DEFAULT_MQTT_PORT = 1884
 DEFAULT_MQTT_TOPIC = "v1/devices/me/telemetry"
@@ -124,7 +124,6 @@ class SensorSimulator:
         Returns:
             Access token string for MQTT authentication.
         """
-        import hashlib
         return hashlib.sha256(machine_id.encode()).hexdigest()[:32]
 
     async def run(self) -> None:
@@ -136,12 +135,11 @@ class SensorSimulator:
         self._load_or_create_machines()
         self._running = True
 
-        # Connect all MQTT publishers
         for publisher in self.mqtt_publishers:
             try:
                 publisher.connect()
             except Exception as e:
-                logger.warning("MQTT connection failed for publisher: %s", e)
+                logger.warning("MQTT connection failed: %s", e)
 
         try:
             while self._running:
@@ -162,7 +160,7 @@ class SensorSimulator:
             try:
                 self._load_state()
             except (json.JSONDecodeError, KeyError) as e:
-                logger.error("Failed to load state: %s. Creating new machines.", e)
+                logger.error("Failed to load state: %s", e)
                 self.create_machines()
         else:
             self.create_machines()
@@ -180,7 +178,9 @@ class SensorSimulator:
             machine = MachineState(machine_id=machine_id)
             machine.age_hours = mdata.get("age_hours", 0.0)
             machine.health_pct = mdata.get("health_pct", 100.0)
-            machine.last_pressure_value = mdata.get("last_pressure_value", 4.0)
+            machine.last_pressure_value = mdata.get(
+                "last_pressure_value", 4.0
+            )
 
             token = self._generate_token(machine_id)
             publisher = MQTTPublisher(
@@ -192,7 +192,9 @@ class SensorSimulator:
             self.mqtt_publishers.append(publisher)
             self.machines.append(machine)
 
-        logger.info("Loaded %d machines from %s", len(self.machines), self.state_file)
+        logger.info(
+            "Loaded %d machines from %s", len(self.machines), self.state_file
+        )
 
     def _save_state(self) -> None:
         """Save machine state to file."""
@@ -220,7 +222,6 @@ class SensorSimulator:
             telemetry = machine.get_telemetry()
             machine.tick(self.degradation_speed * self.interval)
 
-            # Publish to Kafka (async-compatible)
             kafka_task = asyncio.get_event_loop().run_in_executor(
                 None,
                 self._publish_kafka,
@@ -229,7 +230,6 @@ class SensorSimulator:
             )
             tasks.append(kafka_task)
 
-            # Publish to MQTT (async-compatible)
             mqtt_task = asyncio.get_event_loop().run_in_executor(
                 None,
                 self._publish_mqtt,
@@ -285,3 +285,32 @@ class SensorSimulator:
             "degradation_speed": self.degradation_speed,
             "state_file": self.state_file,
         }
+
+
+def main() -> None:
+    """Run the simulator with env var configuration."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    broker = os.getenv("MQTT_BROKER", "localhost")
+    port = int(os.getenv("MQTT_PORT", "1884"))
+    kafka_broker = os.getenv("KAFKA_BROKER", "localhost:9092")
+    interval = int(os.getenv("SENSOR_INTERVAL", "5"))
+    count = int(os.getenv("MACHINE_COUNT", "10"))
+    speed = int(os.getenv("DEGRADATION_SPEED", "1"))
+
+    sim = SensorSimulator(
+        mqtt_broker=broker,
+        mqtt_port=port,
+        kafka_bootstrap=kafka_broker,
+        interval=interval,
+        machine_count=count,
+        degradation_speed=speed,
+    )
+    asyncio.run(sim.run())
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,15 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY thingsboard_kafka_bridge/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY thingsboard_kafka_bridge/ /app/
+
+ENV BRIDGE_PORT=8086
+ENV KAFKA_BROKER=localhost:9092
+
+EXPOSE ${BRIDGE_PORT}
+
+CMD ["python", "-u", "-m", "thingsboard_kafka_bridge.webhook_server"]

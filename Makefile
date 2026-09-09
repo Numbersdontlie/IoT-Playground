@@ -1,26 +1,35 @@
 #Variables
 NAME = iot-playground
 COMPOSE = docker-compose.yml
+GREEN=\033[0;32m
 RED=\033[0;31m
-GREEN=\033[0;32
-RESET=033[0m
+RESET=\033[0m
 
 #commands
 up:
-	docker compose -p $(NAME) -f $(COMPOSE) up --build
-	echo "$(GREEN)PostgreSQL Db + pgAdmin + Thingsboard created$(RESET)"
+	docker compose -p $(NAME) -f $(COMPOSE) up --build -d
+	echo "$(GREEN)All services started$(RESET)"
 
-#remove host in HOST_URL, also stop and remove containers
+#run sensor simulator locally (requires paho-mqtt, confluent-kafka installed)
+sensor-run:
+	python -m sensors
+
+#run Kafka bridge locally (requires flask, confluent-kafka installed)
+bridge-run:
+	python -m thingsboard_kafka_bridge
+
+#remove containers
 down:
 	docker compose -p $(NAME) down
-	echo "$(RED) (NAME) was removed$(RESET)"
+	echo "$(RED)Containers removed$(RESET)"
 
 #remove all data
 clean: down
 	docker compose -f $(COMPOSE) rm -f
 	docker compose -f $(COMPOSE) down --rmi all
-	echo "$(RED) Directories were removed$(RESET)"
+	echo "$(RED)All data removed$(RESET)"
 
-#clean stopped containers
+#clean stopped containers and free disk
 prune: clean
 	docker system prune -a --volumes -f
+	echo "$(RED)System pruned$(RESET)"

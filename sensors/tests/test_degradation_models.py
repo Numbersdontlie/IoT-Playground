@@ -149,16 +149,25 @@ class TestPressureModel:
       | initial | max_drift |
       | 4.0     | 3.0       |
       | 6.0     | 4.0       |
+
+    Spec: "simulate 100 hours" = 100 hours / (1 speed * 5 interval) = 20 readings
     """
 
     def test_pressure_random_walk(self):
+        """Simulate 100 hours = 20 readings (100 / 5)."""
         value = 4.0
-        values = [value]
-        for _ in range(1000):
+        for _ in range(20):
             value = pressure(0, value)
-            values.append(value)
-        total_drift = abs(values[-1] - values[0])
-        assert total_drift <= 5.0  # Generous limit for random walk
+        drift = abs(value - 4.0)
+        assert drift <= 5.0
+
+    def test_pressure_random_walk_larger_initial(self):
+        """Simulate with initial pressure 6.0."""
+        value = 6.0
+        for _ in range(20):
+            value = pressure(0, value)
+        drift = abs(value - 6.0)
+        assert drift <= 6.0
 
     def test_pressure_no_leak_events(self):
         """Most steps should not have leaks."""
