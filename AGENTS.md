@@ -16,12 +16,22 @@ IoT-Playground/
 │   ├── mqtt_publisher.py
 │   ├── kafka_publisher.py
 │   ├── degradation_models.py
-│   └── machine_state.py
-├── thingsboard-kafka-bridge/   # ThingsBoard → Kafka bridge
+│   ├── machine_state.py
+│   └── tests/
+│       ├── test_degradation_models.py
+│       ├── test_machine_state.py
+│       ├── test_kafka_publisher.py
+│       ├── test_mqtt_publisher.py
+│       └── test_sensor_simulator.py
+├── thingsboard_kafka_bridge/   # ThingsBoard → Kafka bridge
 │   ├── __init__.py
 │   ├── requirements.txt
 │   ├── webhook_server.py
-│   └── kafka_producer.py
+│   ├── kafka_producer.py
+│   └── tests/
+│       ├── test_webhook_server.py
+│       ├── test_kafka_producer.py
+│       └── test_routing.py
 └── specs/                      # Gherkin test specifications
     └── *.feature
 ```
@@ -154,22 +164,27 @@ After starting ThingsBoard, configure the webhook:
 
 Run tests with pytest:
 ```bash
-cd sensors && python -m pytest
-cd thingsboard-kafka-bridge && python -m pytest
+# Run all tests
+python -m pytest sensors/tests/ thingsboard_kafka_bridge/tests/ -v
+
+# Run specific package
+python -m pytest sensors/tests/ -v
+python -m pytest thingsboard_kafka_bridge/tests/ -v
 ```
 
 Test structure:
 ```
 sensors/tests/
-├── test_degradation_models.py
-├── test_machine_state.py
-├── test_kafka_publisher.py
-└── test_mqtt_publisher.py
+├── test_degradation_models.py     # Sensor model ranges, alarms, health
+├── test_machine_state.py          # Machine creation, telemetry, aging
+├── test_kafka_publisher.py        # Publish, partitioning, error handling
+├── test_mqtt_publisher.py         # MQTT connection, publish, reconnect
+└── test_sensor_simulator.py       # Simulator orchestration, config
 
-thingsboard-kafka-bridge/tests/
-├── test_webhook_server.py
-├── test_kafka_producer.py
-└── test_routing.py
+thingsboard_kafka_bridge/tests/
+├── test_webhook_server.py         # Flask endpoints, event handling
+├── test_kafka_producer.py         # Event routing, health checks
+└── test_routing.py                # Event type mapping, validation
 ```
 
 ## Kafka UI Access

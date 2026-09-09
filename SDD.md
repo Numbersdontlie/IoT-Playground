@@ -69,12 +69,15 @@ class SensorSimulator:
 - **Broker**: ThingsBoard on port `1884`
 - **Topic pattern**: `v1/devices/me/telemetry` (ThingsBoard default ingestion)
 - **QoS**: 1 (at least once)
-- **Behavior**:
-  - Creates a new connection per publish (stateless, simple)
-  - OR reuses a persistent connection with auto-reconnect
+- **Client Design**: Persistent connection per machine with auto-reconnect
+  - Each `MachineState` maintains its own MQTT client instance
+  - Exponential backoff on reconnection: 1s, 2s, 4s, 8s, max 30s
+  - Single connection reuses across all publishes for a machine
   - Serializes telemetry as JSON with millisecond timestamp
 
 #### Telemetry Format
+
+All telemetry uses the same flat schema for both MQTT and Kafka:
 
 ```json
 {
@@ -85,9 +88,24 @@ class SensorSimulator:
   "Humidity": 58.1,
   "MachineHealth": 87.3,
   "timestamp": 1699999999123,
-  "machine_id": "machine-3"
+  "machine_id": "machine-3",
+  "alarms": []
 }
 ```
+
+**Field definitions:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Temperature` | number | Current temperature in °C |
+| `Vibration` | number | Vibration amplitude in mm/s |
+| `Pressure` | number | System pressure in bar |
+| `RPM` | number | Motor speed in revolutions per minute |
+| `Humidity` | number | Ambient humidity in %RH |
+| `MachineHealth` | number | Per-machine health score (0–100) |
+| `timestamp` | number | Millisecond Unix epoch |
+| `machine_id` | string | Machine identifier (`machine-1`...`machine-N`) |
+| `alarms` | array of strings | List of alarm names if thresholds breached |
 
 ---
 
@@ -95,9 +113,10 @@ class SensorSimulator:
 
 - **Library**: `confluent-kafka` v2.x
 - **Bootstrap servers**: Configured via `KAFKA_BROKER` env var
-- **Topics per machine**: `iot.sensors.machine-1`, `iot.sensors.machine-2`, …, or single topic with partition per machine
-- **Serializer**: JSON (`json.dumps`)
+- **Topic**: Single topic `iot.sensors.raw` for all machines
+- **Serializer**: JSON (`json.dumps`) — same schema as MQTT payload
 - **acks**: `"all"` for durability
+- **Key**: `machine_id` string (hash-partitioned)
 - **Behavior**:
   - Initializes once, reuses producer for all machines
   - Async-compatible via `producer.poll()` in event loop
@@ -105,9 +124,9 @@ class SensorSimulator:
 
 #### Topic Convention
 
-| Topic | Content | Partition |
-|-------|---------|-----------|
-| `iot.sensors.raw` | All raw sensor readings | `machine_id` as key (hash-partitioned) |
+| Topic | Content | Key | Partition Strategy |
+|-------|---------|-----|-------------------|
+| `iot.sensors.raw` | All raw sensor readings | `machine_id` | Murmur2 hash of key — same machine always goes to same partition |
 
 ---
 
@@ -139,11 +158,24 @@ def vibration(age_hours: float) -> float:
 
 #### 2.4.3 Pressure Model (Random Walk with Spikes)
 
+**Note:** This is the only stateful model. State is maintained in `MachineState.last_pressure_value` and passed to the model. All other models are pure functions.
+
 ```python
 def pressure(age_hours: float, last_value: float) -> float:
     drift = random.gauss(0, 0.05)  # Random walk step
     leak = random.exponential(2.0) if random.random() < 0.001 else 0  # Rare leak events
     return last_value + drift - leak
+```
+
+**Usage pattern in `MachineState`:**
+```python
+class MachineState:
+    last_pressure_value: float = 4.0  # Stored state, initialized on creation
+    
+    def get_telemetry(self) -> dict:
+        pressure_value = pressure(self.age_hours, self.last_pressure_value)
+        self.last_pressure_value = pressure_value
+        return {...}
 ```
 
 #### 2.4.4 RPM Model (Motor Degradation)
@@ -170,17 +202,42 @@ def humidity(age_hours: float) -> float:
 
 #### 2.4.6 Health Score Calculation
 
+**Per-sensor health formula:**
+
+Each sensor contributes a health percentage based on how far its reading is from the warning threshold, scaled relative to the gap between warning and critical:
+
 ```python
-def calculate_health(machines: list[MachineState]) -> float:
-    """Weighted average based on worst-performing sensor."""
+def sensor_health(sensor_value: float, warning_threshold: float, critical_threshold: float) -> float:
+    """
+    Returns health 100 (safe) → 0 (critical).
+    - Value at or below warning:  100
+    - Value at critical:          0
+    - Linear interpolation between warning and critical.
+    """
+    if sensor_value <= warning_threshold:
+        return 100.0
+    elif sensor_value >= critical_threshold:
+        return 0.0
+    else:
+        ratio = (sensor_value - warning_threshold) / (critical_threshold - warning_threshold)
+        return max(0.0, 100.0 - ratio * 100.0)
+```
+
+**Aggregate machine health:**
+
+```python
+def calculate_machine_health(machine: MachineState) -> float:
+    """Weighted average of per-sensor health scores."""
     weights = {"Vibration": 0.35, "Temperature": 0.25, "RPM": 0.2, "Pressure": 0.15, "Humidity": 0.05}
-    score = 0
+    score = 0.0
     for sensor_name, weight in weights.items():
-        # Derive sensor health from degradation relative to threshold
-        sensor_health = max(0, 100 - degradation_ratio * 100)
-        score += sensor_health * weight
+        value = get_sensor_value(machine, sensor_name)
+        w, c = get_alarm_thresholds(sensor_name)  # warning, critical
+        score += sensor_health(value, w, c) * weight
     return round(score, 1)
 ```
+
+**Aggregate system health** (across all machines): average of all machine health scores.
 
 #### 2.4.7 Alarm Thresholds
 
@@ -192,11 +249,41 @@ def calculate_health(machines: list[MachineState]) -> float:
 | RPM | > 2200 or < 800 | > 2500 or < 500 |
 | Humidity | > 80% or < 20% | > 90% or < 10% |
 
-When thresholds are breached:
-1. Machine marks an alarm condition
-2. Alarm is published via MQTT (new payload field `alarms`)
-3. Alarm is published to Kafka `thingsboard.alarm` topic (via ThingsBoard)
-4. Health score drops accordingly
+#### Alarm Origin and Flow
+
+Alarms originate **in the simulator** and are carried through the pipeline:
+
+1. **Simulator detects** threshold breach by comparing sensor values against thresholds defined in §2.4.7
+2. **Simulator includes** alarm names in the `alarms` array field of the telemetry payload
+3. **Simulator publishes** payload via MQTT to ThingsBoard
+4. **ThingsBoard stores** telemetry including the `alarms` array
+5. **ThingsBoard Rule Engine** inspects the `alarms` array and triggers alarm entities in ThingsBoard
+6. **Webhook** forwards the event to Kafka Bridge → `thingsboard.alarm` topic
+
+**Alarm entity schema** (created by ThingsBoard rule engine):
+
+```json
+{
+  "alarm_type": "HighTemperature",
+  "severity": "CRITICAL",
+  "originator": "machine-3",
+  "start_ts": 1699999999123,
+  "end_ts": null,
+  "cleared": false,
+  "details": {
+    "sensor": "Temperature",
+    "value": 92.5,
+    "threshold": 90
+  }
+}
+```
+
+**Alarm severity mapping:**
+
+| Breach | Severity |
+|--------|----------|
+| Warning threshold exceeded | `WARNING` |
+| Critical threshold exceeded | `CRITICAL` |
 
 ---
 
@@ -219,12 +306,27 @@ thingsboard-kafka-bridge/
 
 #### Webhook Server API
 
+The bridge does **not** use custom headers. ThingsBoard does not add custom headers to webhook requests by default. The bridge determines event type by parsing the ThingsBoard payload structure:
+
 ```
 POST /events
-  Headers: X-Event-Type: telemetry | alarm | attribute_update
   Body: { ... ThingsBoard event payload ... }
   Response: 202 Accepted
 ```
+
+**Event type detection** (inside the payload, not headers):
+
+ThingsBoard webhooks include a `type` field in the event payload that identifies the event:
+
+```json
+{
+  "type": "POST_TELEMETRY_REQUEST",
+  "entityId": { "type": "DEVICE", "id": "..." },
+  "body": { ... telemetry data ... }
+}
+```
+
+The bridge inspects `event.type` to route to the correct Kafka topic. If the field is missing or unrecognized, the bridge responds with `400 Bad Request`.
 
 #### Event Routing
 
@@ -303,23 +405,22 @@ Machine Age (hours) → Sensor Behavior
 
 ### 3.3 Kafka Topic Schema
 
+Kafka uses the **same flat schema** as MQTT. No nested `telemetry` object.
+
 ```
 Topic: iot.sensors.raw
 
 Key:       machine_id (string, e.g., "machine-3")
 Value:     JSON
   {
-    "machine_id": "machine-3",
+    "Temperature": 72.45,
+    "Vibration": 5.23,
+    "Pressure": 3.87,
+    "RPM": 1380.0,
+    "Humidity": 55.2,
+    "MachineHealth": 78.4,
     "timestamp": 1699999999123,
-    "telemetry": {
-      "Temperature": 72.45,
-      "Vibration": 5.23,
-      "Pressure": 3.87,
-      "RPM": 1380.0,
-      "Humidity": 55.2
-    },
-    "health": 78.4,
-    "age_hours": 342.0,
+    "machine_id": "machine-3",
     "alarms": ["Temperature"]
   }
 ```
@@ -352,7 +453,7 @@ Value:     JSON
 |---------|-------|---------|------|
 | `postgresql` | `postgres:16` | `5432` | Persistent storage for ThingsBoard |
 | `pgadmin` | `dpage/pgadmin4` | `5050` | PostgreSQL admin UI |
-| `thingsboard` | `thingsboard/tb-node:4.3.0.1` | `8080, 7070, 1884, 8883, 5683-5688` | IoT platform (UI, MQTT, CoAP, HTTP) |
+| `thingsboard-ce` | `thingsboard/tb-node:4.3.0.1` | `8080, 7070, 1884, 8883, 5683-5688` | IoT platform (UI, MQTT, CoAP, HTTP) |
 | `zookeeper` | `confluentinc/cp-zookeeper:7.5.0` | `2181` | Kafka cluster coordination |
 | `kafka` | `confluentinc/cp-kafka:7.5.0` | `9092` | Kafka message broker |
 | `kafka-ui` | `optiflows/kafka-ui:latest` | `8085` | Kafka cluster management UI |
@@ -399,9 +500,34 @@ flask>=3.0.0
 ## 7. Operational Considerations
 
 ### 7.1 Logging
-- All components write structured JSON logs
-- Log level configurable via `LOG_LEVEL` env var
-- Bridge logs HTTP requests with request ID for correlation
+
+All components write structured JSON logs. Log level configurable via `LOG_LEVEL` env var.
+
+**Log entry schema:**
+
+```json
+{
+  "timestamp": "2024-11-15T10:30:00.123Z",
+  "level": "INFO",
+  "component": "sensor_simulator",
+  "machine_id": "machine-3",
+  "message": "Published telemetry",
+  "request_id": "a1b2c3d4"
+}
+```
+
+**Required fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | string | ISO 8601 with milliseconds, UTC |
+| `level` | string | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `component` | string | Module name: `sensor_simulator`, `mqtt_publisher`, `kafka_publisher`, `webhook_server`, `kafka_producer` |
+| `message` | string | Human-readable description |
+| `machine_id` | string (optional) | Machine identifier when applicable |
+| `request_id` | string (optional) | Correlation ID for webhook requests |
+
+**Bridge logs HTTP requests** with `request_id` generated via `uuid4` for end-to-end traceability.
 
 ### 7.2 Health Checks
 - Docker Compose health checks for all services

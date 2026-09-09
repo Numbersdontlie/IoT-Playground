@@ -1,0 +1,1 @@
+# thingsboard-kafka-bridge tests
