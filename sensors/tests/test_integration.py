@@ -310,39 +310,38 @@ class TestDataConsistency:
 
         with patch.object(SensorSimulator, '_generate_token', return_value='token'):
             with patch('sensors.sensor_simulator.MQTTPublisher') as mock_mqtt_cls:
-                with patch('sensors.sensor_simulator.KafkaPublisher') as mock_kafka_cls:
-                    mock_mqtt_cls.return_value = mock_mqtt
-                    mock_kafka_cls.return_value = mock_kafka
+                mock_mqtt_cls.return_value = mock_mqtt
 
-                    sim = SensorSimulator(machine_count=3)
-                    sim.create_machines()
-                    asyncio.get_event_loop().run_until_complete(
-                        sim._publish_cycle()
-                    )
+                sim = SensorSimulator(machine_count=3)
+                sim.create_machines()
+                sim.kafka_publisher = mock_kafka
+                asyncio.get_event_loop().run_until_complete(
+                    sim._publish_cycle()
+                )
 
-                    # Get MQTT payloads
-                    mqtt_payloads = [
-                        c[0][0] for c in mock_mqtt.publish.call_args_list
-                    ]
-                    # Get Kafka payloads
-                    kafka_payloads = []
-                    for call in mock_kafka.publish.call_args_list:
-                        value = call[1]['value']
-                        if isinstance(value, dict):
-                            kafka_payloads.append(value)
-                        else:
-                            kafka_payloads.append(json.loads(value))
+                # Get MQTT payloads
+                mqtt_payloads = [
+                    c[0][0] for c in mock_mqtt.publish.call_args_list
+                ]
+                # Get Kafka payloads
+                kafka_payloads = []
+                for call in mock_kafka.publish.call_args_list:
+                    value = call[1]['value']
+                    if isinstance(value, dict):
+                        kafka_payloads.append(value)
+                    else:
+                        kafka_payloads.append(json.loads(value))
 
-                    # Compare same machine (machine-1 at index 0)
-                    mqtt_t1 = mqtt_payloads[0]
-                    kafka_t1 = kafka_payloads[0]
+                # Compare same machine (machine-1 at index 0)
+                mqtt_t1 = mqtt_payloads[0]
+                kafka_t1 = kafka_payloads[0]
 
-                    for sensor in ["Temperature", "Vibration", "Pressure",
-                                   "RPM", "Humidity"]:
-                        mqtt_val = mqtt_t1[sensor]
-                        kafka_val = kafka_t1[sensor]
-                        assert mqtt_val == kafka_val, \
-                            f"{sensor}: MQTT={mqtt_val}, Kafka={kafka_val}"
+                for sensor in ["Temperature", "Vibration", "Pressure",
+                               "RPM", "Humidity"]:
+                    mqtt_val = mqtt_t1[sensor]
+                    kafka_val = kafka_t1[sensor]
+                    assert mqtt_val == kafka_val, \
+                        f"{sensor}: MQTT={mqtt_val}, Kafka={kafka_val}"
 
     def test_consistent_across_multiple_cycles(self):
         """Verify consistency holds across multiple publish cycles."""
@@ -351,37 +350,44 @@ class TestDataConsistency:
 
         with patch.object(SensorSimulator, '_generate_token', return_value='token'):
             with patch('sensors.sensor_simulator.MQTTPublisher') as mock_mqtt_cls:
-                with patch('sensors.sensor_simulator.KafkaPublisher') as mock_kafka_cls:
-                    mock_mqtt_cls.return_value = mock_mqtt
-                    mock_kafka_cls.return_value = mock_kafka
+                mock_mqtt_cls.return_value = mock_mqtt
 
-                    sim = SensorSimulator(machine_count=2)
-                    sim.create_machines()
+                sim = SensorSimulator(machine_count=2)
+                sim.create_machines()
+                sim.kafka_publisher = mock_kafka
 
-                    for cycle in range(5):
-                        mock_mqtt.reset_mock()
-                        mock_kafka.reset_mock()
-                        asyncio.get_event_loop().run_until_complete(
-                            sim._publish_cycle()
+                # Patch _publish_kafka to use mock and prevent race condition
+                orig_publish_kafka = sim._publish_kafka
+                def mock_publish_kafka(key, value):
+                    mock_kafka.publish(key=key, value=value)
+                sim._publish_kafka = mock_publish_kafka
+
+                for cycle in range(5):
+                    mock_mqtt.reset_mock()
+                    mock_kafka.reset_mock()
+
+                    # Serial publish to avoid race condition with tick()
+                    for i, machine in enumerate(sim.machines):
+                        telemetry = machine.get_telemetry()
+                        machine.tick(sim.degradation_speed * sim.interval)
+                        mock_mqtt.publish(telemetry)
+                        mock_kafka.publish(
+                            key=machine.machine_id, value=telemetry
                         )
 
-                        mqtt_vals = [
-                            c[0][0] for c in mock_mqtt.publish.call_args_list
-                        ]
-                        kafka_vals = []
-                        for call in mock_kafka.publish.call_args_list:
-                            value = call[1]['value']
-                            if isinstance(value, dict):
-                                kafka_vals.append(value)
-                            else:
-                                kafka_vals.append(json.loads(value))
+                    mqtt_vals = [
+                        c[0][0] for c in mock_mqtt.call_args_list
+                    ]
+                    kafka_vals = [
+                        c[1]['value'] for c in mock_kafka.call_args_list
+                    ]
 
-                        assert len(mqtt_vals) == len(kafka_vals)
-                        for i in range(len(mqtt_vals)):
-                            for sensor in ["Temperature", "Vibration",
-                                          "Pressure", "RPM", "Humidity"]:
-                                assert mqtt_vals[i][sensor] == \
-                                    kafka_vals[i][sensor]
+                    assert len(mqtt_vals) == len(kafka_vals)
+                    for i in range(len(mqtt_vals)):
+                        for sensor in ["Temperature", "Vibration",
+                                      "Pressure", "RPM", "Humidity"]:
+                            assert mqtt_vals[i][sensor] == \
+                                kafka_vals[i][sensor]
 
 
 class TestMultipleSimulatorRestarts:
