@@ -14,6 +14,7 @@ class TestMQTTPublisherInit:
         assert pub.port == 1884
         assert pub.topic == "v1/devices/me/telemetry"
         assert pub.qos == 1
+        assert pub.token == ""
 
     def test_custom_values(self):
         pub = MQTTPublisher(
@@ -21,11 +22,13 @@ class TestMQTTPublisherInit:
             port=1234,
             topic="custom/topic",
             qos=0,
+            token="device-token-123",
         )
         assert pub.broker == "custom-broker"
         assert pub.port == 1234
         assert pub.topic == "custom/topic"
         assert pub.qos == 0
+        assert pub.token == "device-token-123"
 
     def test_default_backoff_values(self):
         pub = MQTTPublisher()
@@ -58,14 +61,24 @@ class TestMQTTPublisherConnect:
     """Test MQTT connection per specs/mqtt_publishing.feature."""
 
     @patch("sensors.mqtt_publisher.mqtt")
+    def test_connect_uses_token_from_init(self, mock_mqtt):
+        mock_client = MagicMock()
+        mock_mqtt.Client.return_value = mock_client
+        pub = MQTTPublisher(token="my-token")
+        result = pub.connect()
+        assert result is True
+        mock_mqtt.Client.assert_called_once()
+        mock_client.username_pw_set.assert_called_once_with("my-token")
+
+    @patch("sensors.mqtt_publisher.mqtt")
     def test_connect_creates_client(self, mock_mqtt):
         mock_client = MagicMock()
         mock_mqtt.Client.return_value = mock_client
         pub = MQTTPublisher()
-        result = pub.connect(token="test-token")
+        result = pub.connect()
         assert result is True
         mock_mqtt.Client.assert_called_once()
-        mock_client.username_pw_set.assert_called_once_with("test-token")
+        mock_client.username_pw_set.assert_called_once_with("")
 
     @patch("sensors.mqtt_publisher.mqtt")
     def test_connect_sends_callback_setup(self, mock_mqtt):

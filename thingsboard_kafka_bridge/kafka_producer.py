@@ -19,22 +19,23 @@ DEFAULT_ALARM_TOPIC = "thingsboard.alarm"
 DEFAULT_ATTRIBUTE_TOPIC = "thingsboard.attributes"
 DEFAULT_BOOTSTRAP = "localhost:9092"
 
+DEFAULT_EVENT_ROUTES: Dict[str, str] = {
+    "POST_TELEMETRY_REQUEST": DEFAULT_TELEMETRY_TOPIC,
+    "ALARM": DEFAULT_ALARM_TOPIC,
+    "ATTRIBUTE_UPDATE": DEFAULT_ATTRIBUTE_TOPIC,
+}
+
 
 class KafkaBridgeProducer:
     """Routes ThingsBoard events to Kafka topics.
 
     Attributes:
+        EVENT_ROUTES: Mapping of event types to Kafka topics.
         telemetry_topic: Topic for telemetry events.
         alarm_topic: Topic for alarm events.
         attribute_topic: Topic for attribute update events.
         bootstrap_servers: Kafka broker addresses.
     """
-
-    EVENT_ROUTES: Dict[str, str] = {
-        "POST_TELEMETRY_REQUEST": DEFAULT_TELEMETRY_TOPIC,
-        "ALARM": DEFAULT_ALARM_TOPIC,
-        "ATTRIBUTE_UPDATE": DEFAULT_ATTRIBUTE_TOPIC,
-    }
 
     def __init__(
         self,
@@ -42,6 +43,7 @@ class KafkaBridgeProducer:
         alarm_topic: str = DEFAULT_ALARM_TOPIC,
         attribute_topic: str = DEFAULT_ATTRIBUTE_TOPIC,
         bootstrap_servers: str = DEFAULT_BOOTSTRAP,
+        routes: Optional[Dict[str, str]] = None,
     ) -> None:
         """Initialize bridge producer.
 
@@ -50,6 +52,7 @@ class KafkaBridgeProducer:
             alarm_topic: Topic for alarm events.
             attribute_topic: Topic for attribute updates.
             bootstrap_servers: Kafka broker connection string.
+            routes: Optional custom event-to-topic routing table.
         """
         self.telemetry_topic = telemetry_topic
         self.alarm_topic = alarm_topic
@@ -58,6 +61,15 @@ class KafkaBridgeProducer:
         self._producer: Optional[Producer] = None  # type: ignore
         self._initialized = False
         self._healthy = False
+
+        if routes:
+            self.EVENT_ROUTES = routes
+        else:
+            self.EVENT_ROUTES = {
+                "POST_TELEMETRY_REQUEST": telemetry_topic,
+                "ALARM": alarm_topic,
+                "ATTRIBUTE_UPDATE": attribute_topic,
+            }
 
         self._configure_producer()
 

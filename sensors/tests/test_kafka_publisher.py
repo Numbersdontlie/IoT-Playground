@@ -209,3 +209,14 @@ class TestKafkaPublisherFlush:
         mock_producer_cls.return_value = None
         pub = KafkaPublisher()
         assert pub.flush() == 0
+
+    @patch("sensors.kafka_publisher.Producer")
+    def test_flush_calls_producer_flush(self, mock_producer_cls):
+        mock_producer = MagicMock()
+        mock_producer.flush.return_value = 5
+        mock_producer_cls.return_value = mock_producer
+
+        pub = KafkaPublisher()
+        result = pub.flush(timeout=3.0)
+        assert result == 5
+        mock_producer.flush.assert_called_once_with(3.0)

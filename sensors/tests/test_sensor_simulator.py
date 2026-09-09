@@ -19,6 +19,7 @@ class TestSimulatorInit:
         assert sim.interval == 5
         assert sim.machine_count == 10
         assert sim.degradation_speed == 1
+        assert sim.state_file == "machine_state.json"
 
     def test_custom_values(self):
         sim = SensorSimulator(
@@ -30,6 +31,7 @@ class TestSimulatorInit:
             interval=10,
             machine_count=5,
             degradation_speed=2,
+            state_file="/tmp/state.json",
         )
         assert sim.mqtt_broker == "custom"
         assert sim.mqtt_port == 1234
@@ -39,6 +41,7 @@ class TestSimulatorInit:
         assert sim.interval == 10
         assert sim.machine_count == 5
         assert sim.degradation_speed == 2
+        assert sim.state_file == "/tmp/state.json"
 
 
 class TestSimulatorCreateMachines:
@@ -53,6 +56,7 @@ class TestSimulatorCreateMachines:
         sim = SensorSimulator(machine_count=5)
         sim.create_machines()
         assert len(sim.get_machines()) == 5
+        assert len(sim.mqtt_publishers) == 5
 
     def test_machines_have_ids(self):
         sim = SensorSimulator(machine_count=3)
@@ -71,6 +75,14 @@ class TestSimulatorCreateMachines:
         sim.create_machines()
         for machine in sim.get_machines():
             assert machine.health_pct == 100.0
+
+    def test_per_machine_mqtt_publishers(self):
+        sim = SensorSimulator(machine_count=3)
+        sim.create_machines()
+        assert len(sim.mqtt_publishers) == 3
+        for publisher in sim.mqtt_publishers:
+            assert hasattr(publisher, "token")
+            assert len(publisher.token) > 0
 
 
 class TestSimulatorGetConfig:
@@ -113,14 +125,31 @@ class TestSimulatorPublishing:
         sim = SensorSimulator(machine_count=3)
         sim.create_machines()
 
-        # Call publish cycle directly
-        asyncio.get_event_loop().run_until_complete(
-            sim._publish_cycle()
-        )
+        # Mock the executor-based publish methods
+        with patch.object(sim, "_publish_mqtt") as mock_mqtt_pub:
+            with patch.object(sim, "_publish_kafka") as mock_kafka_pub:
+                asyncio.get_event_loop().run_until_complete(
+                    sim._publish_cycle()
+                )
 
-        # Each machine should have published
-        assert mock_mqtt_instance.publish.call_count == 3
-        assert mock_kafka_instance.publish.call_count == 3
+                # Each machine should have been published
+                assert mock_mqtt_pub.call_count == 3
+                assert mock_kafka_pub.call_count == 3
+
+    @patch("sensors.sensor_simulator.KafkaPublisher")
+    def test_mqtt_publishers_have_tokens(self, mock_kafka):
+        """Each MQTT publisher should have a unique token."""
+        mock_kafka_instance = MagicMock()
+        mock_kafka.return_value = mock_kafka_instance
+
+        sim = SensorSimulator(machine_count=3)
+        sim.create_machines()
+
+        tokens = [p.token for p in sim.mqtt_publishers]
+        # All tokens should be unique
+        assert len(set(tokens)) == 3
+        # All tokens should be non-empty
+        assert all(len(t) > 0 for t in tokens)
 
 
 class TestSimulatorAging:
@@ -206,3 +235,31 @@ class TestSimulatorNominalValues:
         sim.create_machines()
         telemetry = sim.get_machines()[0].get_telemetry()
         assert 38 <= telemetry["Humidity"] <= 62
+
+
+class TestSimulatorStatePersistence:
+    """Test state persistence per integration.feature.
+
+    Scenario: Multiple simulator restarts
+      When simulator is stopped and restarted
+      Then machine ages should persist (no reset to 0)
+    """
+
+    def test_generate_token_deterministic(self):
+        token1 = SensorSimulator._generate_token("machine-1")
+        token2 = SensorSimulator._generate_token("machine-1")
+        token3 = SensorSimulator._generate_token("machine-2")
+        assert token1 == token2
+        assert token1 != token3
+        assert len(token1) > 0
+
+    def test_get_config_contains_state_file(self):
+        sim = SensorSimulator()
+        config = sim.get_config()
+        assert "state_file" in config
+        assert config["state_file"] == "machine_state.json"
+
+    def test_config_state_file_custom(self):
+        sim = SensorSimulator(state_file="/custom/path.json")
+        config = sim.get_config()
+        assert config["state_file"] == "/custom/path.json"

@@ -40,6 +40,7 @@ class MQTTPublisher:
         qos: int = 1,
         backoff_base: float = 1.0,
         backoff_max: float = 30.0,
+        token: str = "",
     ) -> None:
         """Initialize MQTT publisher.
 
@@ -50,6 +51,7 @@ class MQTTPublisher:
             qos: QoS level for publishing.
             backoff_base: Initial reconnection delay.
             backoff_max: Maximum reconnection delay.
+            token: Device access token for authentication.
         """
         self.broker = broker
         self.port = port
@@ -57,14 +59,14 @@ class MQTTPublisher:
         self.qos = qos
         self.backoff_base = backoff_base
         self.backoff_max = backoff_max
+        self.token = token
         self._client: Optional[mqtt.Client] = None  # type: ignore
         self._connected = False
 
-    def connect(self, token: str = "") -> bool:
+    def connect(self) -> bool:
         """Establish MQTT connection with auto-reconnect.
 
-        Args:
-            token: MQTT username/access token.
+        Uses the token set during initialization for authentication.
 
         Returns:
             True if connection established, False otherwise.
@@ -74,7 +76,7 @@ class MQTTPublisher:
             return False
 
         self._client = mqtt.Client()
-        self._client.username_pw_set(token)
+        self._client.username_pw_set(self.token)
 
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect

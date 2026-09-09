@@ -1,15 +1,18 @@
 """Sensor degradation models for industrial machines.
 
-Each model is a pure function: f(age_hours: float) -> float.
+Models:
+- Pure functions (no side effects): temperature, vibration, rpm, humidity
+- Stateful function: pressure (requires last_value from caller)
+
 All models add noise using random.gauss(0, sigma) and never seed globally.
-Models should never mutate state.
+Models should never mutate state (except pressure, which requires last_value).
 
 Sensor thresholds for alarm generation:
 - Temperature: warning > 75°C, critical > 90°C
 - Vibration: warning > 15 mm/s, critical > 25 mm/s
 - Pressure: warning < 1.5 bar, critical < 1.0 bar
 - RPM: warning > 2200 or < 800 rev/min, critical > 2500 or < 500 rev/min
-- Humidity: warning > 80% or < 20% RH, critical > 90% or < 10% RH
+- Humidity: warning < 20% or > 80% RH, critical < 10% or > 90% RH
 """
 
 import math
@@ -22,7 +25,7 @@ ALARM_THRESHOLDS = {
     "Vibration": (15.0, 25.0, None, None),
     "Pressure": (1.0, 1.5, 1.5, None),
     "RPM": (800.0, 2200.0, 500.0, 2500.0),
-    "Humidity": (20.0, 80.0, 10.0, 90.0),
+    "Humidity": (10.0, 80.0, 20.0, 90.0),
 }
 
 
@@ -254,12 +257,55 @@ def calculate_machine_health(sensor_values: dict) -> float:
             continue
 
         value = sensor_values[sensor_name]
-        warning, critical = ALARM_THRESHOLDS[sensor_name][:2]
 
-        # RPM low-end and pressure are inverted (lower is worse)
-        invert = sensor_name in ("RPM", "Humidity")
+        if sensor_name in ("Humidity", "RPM"):
+            # U-shaped: both extremes are bad
+            low_w, high_w, low_c, high_c = ALARM_THRESHOLDS[sensor_name]
+            health = sensor_health_u_shaped(value, low_w, low_c, high_w, high_c)
+        elif sensor_name == "Pressure":
+            # Monotonic: lower is worse
+            warning, critical = ALARM_THRESHOLDS[sensor_name][:2]
+            health = sensor_health(value, warning, critical, invert=True)
+        else:
+            # Monotonic: higher is worse (Temperature, Vibration)
+            warning, critical = ALARM_THRESHOLDS[sensor_name][:2]
+            health = sensor_health(value, warning, critical, invert=False)
 
-        health = sensor_health(value, warning, critical, invert=invert)
         score += health * weight
 
     return round(score, 1)
+
+
+def sensor_health_u_shaped(value: float, low_warning: float, low_critical: float,
+                           high_warning: float, high_critical: float) -> float:
+    """Health for sensors where both extremes are bad (e.g., humidity).
+
+    Args:
+        value: Current sensor reading.
+        low_warning: Lower warning threshold.
+        low_critical: Lower critical threshold.
+        high_warning: Upper warning threshold.
+        high_critical: Upper critical threshold.
+
+    Returns:
+        Health score 100.0 (safe) to 0.0 (critical).
+    """
+    # Safe zone
+    if low_warning <= value <= high_warning:
+        return 100.0
+
+    # Below low_warning
+    if value < low_warning:
+        if value <= low_critical:
+            return 0.0
+        ratio = (low_warning - value) / (low_warning - low_critical)
+        return max(0.0, min(100.0, 100.0 - ratio * 100.0))
+
+    # Above high_warning
+    if value > high_warning:
+        if value >= high_critical:
+            return 0.0
+        ratio = (value - high_warning) / (high_critical - high_warning)
+        return max(0.0, min(100.0, 100.0 - ratio * 100.0))
+
+    return 100.0

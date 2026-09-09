@@ -42,7 +42,8 @@ class MachineState:
         self.age_hours: float = 0.0
         self.health_pct: float = 100.0
         self.last_pressure_value: float = initial_pressure
-        self._initial_timestamp: float = time.time()
+        self._cached_sensor_values: Optional[dict] = None
+        self._cached_timestamp: float = 0.0
 
     def tick(self, interval_hours: float) -> None:
         """Advance machine state by given hours.
@@ -51,6 +52,34 @@ class MachineState:
             interval_hours: Hours to advance (typically DEGRADATION_SPEED * interval).
         """
         self.age_hours += interval_hours
+        self._invalidate_cache()
+
+    def _invalidate_cache(self) -> None:
+        """Invalidate cached sensor values when state changes."""
+        self._cached_sensor_values = None
+        self._cached_timestamp = 0.0
+
+    def _get_sensor_values(self) -> dict:
+        """Get current sensor readings for all sensors (with caching).
+
+        Sensor values are cached to ensure consistency between
+        telemetry, alarm detection, and health score.
+
+        Returns:
+            Dict mapping sensor names to their current values.
+        """
+        if self._cached_sensor_values is not None:
+            return self._cached_sensor_values
+
+        self._cached_sensor_values = {
+            "Temperature": temperature(self.age_hours),
+            "Vibration": vibration(self.age_hours),
+            "Pressure": self._get_pressure(),
+            "RPM": rpm(self.age_hours),
+            "Humidity": humidity(self.age_hours),
+        }
+        self._cached_timestamp = time.time()
+        return self._cached_sensor_values
 
     def get_sensor_values(self) -> dict:
         """Get current sensor readings for all sensors.
@@ -58,13 +87,7 @@ class MachineState:
         Returns:
             Dict mapping sensor names to their current values.
         """
-        return {
-            "Temperature": temperature(self.age_hours),
-            "Vibration": vibration(self.age_hours),
-            "Pressure": self._get_pressure(),
-            "RPM": rpm(self.age_hours),
-            "Humidity": humidity(self.age_hours),
-        }
+        return self._get_sensor_values()
 
     def _get_pressure(self) -> float:
         """Get current pressure reading (stateful).
@@ -80,10 +103,13 @@ class MachineState:
     def get_telemetry(self) -> dict:
         """Get complete telemetry payload for this machine.
 
+        Sensor values are evaluated once and cached to ensure
+        consistency with alarm detection and health score.
+
         Returns:
             Dict containing all sensor values, health, timestamp, and alarms.
         """
-        sensor_values = self.get_sensor_values()
+        sensor_values = self._get_sensor_values()
         alarms = []
         for sensor_name, value in sensor_values.items():
             alarm_list = check_alarms(value, sensor_name)
@@ -113,10 +139,12 @@ class MachineState:
     def get_alarm_events(self) -> list:
         """Get alarm entity events for this machine.
 
+        Uses the same cached sensor values as get_telemetry() for consistency.
+
         Returns:
             List of alarm event dicts (empty if no alarms).
         """
-        sensor_values = self.get_sensor_values()
+        sensor_values = self._get_sensor_values()
         events = []
         for sensor_name, value in sensor_values.items():
             alarms = check_alarms(value, sensor_name)

@@ -13,6 +13,34 @@ from thingsboard_kafka_bridge.kafka_producer import KafkaBridgeProducer
 
 logger = logging.getLogger(__name__)
 
+# Module-level singleton for the Kafka bridge producer
+_producer: Optional[KafkaBridgeProducer] = None
+
+
+def get_producer() -> Optional[KafkaBridgeProducer]:
+    """Get or create the singleton Kafka bridge producer.
+
+    Returns:
+        KafkaBridgeProducer instance or None if not initialized.
+    """
+    return _producer
+
+
+def set_producer(producer: KafkaBridgeProducer) -> None:
+    """Set the singleton Kafka bridge producer.
+
+    Args:
+        producer: Kafka bridge producer instance.
+    """
+    global _producer
+    _producer = producer
+
+
+def clear_producer() -> None:
+    """Clear the singleton Kafka bridge producer."""
+    global _producer
+    _producer = None
+
 
 def create_app(
     producer: Optional[KafkaBridgeProducer] = None,
@@ -22,6 +50,8 @@ def create_app(
     attribute_topic: str = "thingsboard.attributes",
 ) -> Flask:
     """Create Flask app for webhook server.
+
+    If no producer is provided, creates a singleton producer instance.
 
     Args:
         producer: Optional pre-configured producer.
@@ -33,16 +63,22 @@ def create_app(
     Returns:
         Configured Flask application.
     """
+    global _producer
+
     app = Flask(__name__)
     app.config["DEBUG"] = False
 
-    if producer is None:
-        producer = KafkaBridgeProducer(
+    if producer is not None:
+        _producer = producer
+    elif _producer is None:
+        _producer = KafkaBridgeProducer(
             telemetry_topic=telemetry_topic,
             alarm_topic=alarm_topic,
             attribute_topic=attribute_topic,
             bootstrap_servers=bootstrap_servers,
         )
+
+    broker = get_producer()
 
     @app.route("/events", methods=["POST"])
     def handle_events():
@@ -54,6 +90,10 @@ def create_app(
         Returns:
             Response with status code.
         """
+        broker = get_producer()
+        if broker is None:
+            return jsonify({"error": "Bridge not initialized"}), 503
+
         try:
             data = request.get_json(force=False, silent=False)
         except Exception as e:
@@ -67,7 +107,7 @@ def create_app(
         if not event_type:
             return jsonify({"error": "Missing event type"}), 400
 
-        success = producer.publish_event(event_type, data)
+        success = broker.publish_event(event_type, data)
 
         if success:
             return jsonify({"status": "accepted"}), 202
@@ -81,7 +121,15 @@ def create_app(
         Returns:
             Health status with Kafka connectivity.
         """
-        healthy = producer.check_health()
+        broker = get_producer()
+        if broker is None:
+            return jsonify({
+                "status": "unhealthy",
+                "kafka": "disconnected",
+                "reason": "bridge not initialized",
+            }), 200
+
+        healthy = broker.check_health()
         return jsonify({
             "status": "healthy" if healthy else "unhealthy",
             "kafka": "connected" if healthy else "disconnected",
@@ -111,7 +159,7 @@ class WebhookServer:
         self.host = host
         self.port = port
         self.app = create_app(producer=producer, **kwargs)
-        self._producer = producer
+        self._producer = get_producer()
 
     def get_app(self) -> Flask:
         """Get the Flask application instance.
@@ -125,3 +173,8 @@ class WebhookServer:
     def producer(self) -> Optional[KafkaBridgeProducer]:
         """Get the Kafka bridge producer."""
         return self._producer
+
+    @staticmethod
+    def teardown() -> None:
+        """Clear the singleton producer (useful for tests)."""
+        clear_producer()

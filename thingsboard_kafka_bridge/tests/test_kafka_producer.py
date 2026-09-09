@@ -40,18 +40,30 @@ class TestKafkaBridgeProducerRoutes:
     """
 
     def test_telemetry_event_type(self):
-        event_type = "POST_TELEMETRY_REQUEST"
-        topic = KafkaBridgeProducer.EVENT_ROUTES[event_type]
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("thingsboard_kafka_bridge.kafka_producer.Producer", None)
+            from thingsboard_kafka_bridge.kafka_producer import KafkaBridgeProducer
+            prod = KafkaBridgeProducer()
+
+        topic = prod.EVENT_ROUTES["POST_TELEMETRY_REQUEST"]
         assert topic == "thingsboard.telemetry"
 
     def test_alarm_event_type(self):
-        event_type = "ALARM"
-        topic = KafkaBridgeProducer.EVENT_ROUTES[event_type]
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("thingsboard_kafka_bridge.kafka_producer.Producer", None)
+            from thingsboard_kafka_bridge.kafka_producer import KafkaBridgeProducer
+            prod = KafkaBridgeProducer()
+
+        topic = prod.EVENT_ROUTES["ALARM"]
         assert topic == "thingsboard.alarm"
 
     def test_attribute_event_type(self):
-        event_type = "ATTRIBUTE_UPDATE"
-        topic = KafkaBridgeProducer.EVENT_ROUTES[event_type]
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("thingsboard_kafka_bridge.kafka_producer.Producer", None)
+            from thingsboard_kafka_bridge.kafka_producer import KafkaBridgeProducer
+            prod = KafkaBridgeProducer()
+
+        topic = prod.EVENT_ROUTES["ATTRIBUTE_UPDATE"]
         assert topic == "thingsboard.attributes"
 
     def test_unknown_event_type_returns_none(self):
@@ -61,9 +73,14 @@ class TestKafkaBridgeProducerRoutes:
         assert topic is None
 
     def test_all_expected_routes_exist(self):
-        assert "POST_TELEMETRY_REQUEST" in KafkaBridgeProducer.EVENT_ROUTES
-        assert "ALARM" in KafkaBridgeProducer.EVENT_ROUTES
-        assert "ATTRIBUTE_UPDATE" in KafkaBridgeProducer.EVENT_ROUTES
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("thingsboard_kafka_bridge.kafka_producer.Producer", None)
+            from thingsboard_kafka_bridge.kafka_producer import KafkaBridgeProducer
+            prod = KafkaBridgeProducer()
+
+        assert "POST_TELEMETRY_REQUEST" in prod.EVENT_ROUTES
+        assert "ALARM" in prod.EVENT_ROUTES
+        assert "ATTRIBUTE_UPDATE" in prod.EVENT_ROUTES
 
 
 class TestKafkaBridgeProducerPublish:

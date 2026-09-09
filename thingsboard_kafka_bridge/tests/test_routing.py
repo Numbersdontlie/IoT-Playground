@@ -5,27 +5,33 @@ from thingsboard_kafka_bridge.kafka_producer import KafkaBridgeProducer
 
 
 class TestEventRoutng:
-    """Test event type routing per specs/kafka_bridge.feature.
-
-    Scenario: Bridge routes alarm events correctly
-      When POST /events with alarm data and type=alarm
-      Then should publish to thingsboard.alarm topic
-
-    Scenario: Bridge routes attribute updates correctly
-      When POST /events with attribute data and type=attribute_update
-      Then should publish to thingsboard.attributes topic
-    """
+    """Test event type routing per specs/kafka_bridge.feature."""
 
     def test_routing_maps_post_telemetry(self):
-        assert KafkaBridgeProducer.EVENT_ROUTES["POST_TELEMETRY_REQUEST"] == \
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("thingsboard_kafka_bridge.kafka_producer.Producer", None)
+            from thingsboard_kafka_bridge.kafka_producer import KafkaBridgeProducer
+            prod = KafkaBridgeProducer()
+
+        assert prod.EVENT_ROUTES["POST_TELEMETRY_REQUEST"] == \
             "thingsboard.telemetry"
 
     def test_routing_maps_alarm(self):
-        assert KafkaBridgeProducer.EVENT_ROUTES["ALARM"] == \
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("thingsboard_kafka_bridge.kafka_producer.Producer", None)
+            from thingsboard_kafka_bridge.kafka_producer import KafkaBridgeProducer
+            prod = KafkaBridgeProducer()
+
+        assert prod.EVENT_ROUTES["ALARM"] == \
             "thingsboard.alarm"
 
     def test_routing_maps_attribute_update(self):
-        assert KafkaBridgeProducer.EVENT_ROUTES["ATTRIBUTE_UPDATE"] == \
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("thingsboard_kafka_bridge.kafka_producer.Producer", None)
+            from thingsboard_kafka_bridge.kafka_producer import KafkaBridgeProducer
+            prod = KafkaBridgeProducer()
+
+        assert prod.EVENT_ROUTES["ATTRIBUTE_UPDATE"] == \
             "thingsboard.attributes"
 
 

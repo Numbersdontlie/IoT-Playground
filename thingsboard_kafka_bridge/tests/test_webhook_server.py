@@ -3,7 +3,17 @@
 import pytest
 import json
 from unittest.mock import MagicMock
-from thingsboard_kafka_bridge.webhook_server import create_app, WebhookServer
+from thingsboard_kafka_bridge.webhook_server import create_app, WebhookServer, clear_producer
+
+
+class TestCreateApp:
+    """Test Flask app creation."""
+
+    def setup_method(self):
+        clear_producer()
+
+    def teardown_method(self):
+        clear_producer()
 
 
 class TestCreateApp:
@@ -31,6 +41,12 @@ class TestEventsEndpoint:
       When POST /events with telemetry data
       Then should respond with 202 Accepted
     """
+
+    def setup_method(self):
+        clear_producer()
+
+    def teardown_method(self):
+        clear_producer()
 
     def test_returns_202_for_telemetry(self):
         mock_producer = MagicMock()

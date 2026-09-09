@@ -149,3 +149,18 @@ class KafkaPublisher:
             List of error message strings.
         """
         return self._errors.copy()
+
+    def flush(self, timeout: float = 5.0) -> int:
+        """Flush all pending messages to Kafka.
+
+        Call this before shutdown to prevent message loss.
+
+        Args:
+            timeout: Maximum time to wait in seconds.
+
+        Returns:
+            Number of messages still in queue after flush attempt.
+        """
+        if self._producer is None:
+            return 0
+        return self._producer.flush(timeout)
